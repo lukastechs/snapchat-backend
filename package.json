@@ -1,0 +1,22 @@
+{
+  "name": "snapchat-age-checker-backend",
+  "version": "1.0.0",
+  "description": "Backend for Snapchat Age Checker",
+  "main": "snapchat-backend.js",
+  "scripts": {
+    "start": "node snapchat-backend.js",
+    "dev": "nodemon snapchat-backend.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "snapkit": "^0.24.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "author": "Your Name",
+  "license": "ISC"
+}
