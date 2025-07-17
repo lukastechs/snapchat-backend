@@ -211,25 +211,42 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
     const contentType = response.headers.get('Content-Type') || '';
     console.log('ScraperTech Status:', response.status, 'Content-Type:', contentType);
 
-    if (!contentType.includes('application/json')) {
+    let data;
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
       const text = await response.text();
       console.log('ScraperTech Response (non-JSON):', text.slice(0, 200));
-      return res.status(response.status).json({
-        error: 'Invalid response from ScraperTech',
-        details: `Expected JSON, received ${contentType}`,
-        responseText: text.slice(0, 200)
-      });
+      // Attempt to extract JSON from text/html response
+      try {
+        const jsonMatch = text.match(/\{.*\}/s);
+        if (jsonMatch) {
+          data = JSON.parse(jsonMatch[0]);
+        } else {
+          return res.status(response.status).json({
+            error: 'Invalid response from ScraperTech',
+            details: `Expected JSON, received ${contentType}, no JSON found in response`,
+            responseText: text.slice(0, 200)
+          });
+        }
+      } catch (parseError) {
+        return res.status(response.status).json({
+          error: 'Failed to parse ScraperTech response',
+          details: `Expected JSON, received ${contentType}, parsing failed`,
+          responseText: text.slice(0, 200),
+          parseError: parseError.message
+        });
+      }
     }
 
-    const data = await response.json();
     console.log('ScraperTech Response:', JSON.stringify(data, null, 2));
 
-    if (response.ok && data && data.userInfo && data.userInfo.user) {
-      const user = data.userInfo.user;
-      const stats = data.userInfo.stats || {};
+    if (response.ok && data && data.success && data.data && data.data.info) {
+      const user = data.data.info;
+      const stats = data.data.stats || {};
       const ageEstimate = SnapchatAgeEstimator.estimateAccountAge(
-        user.username || user.uniqueId || username,
-        user.displayName || '',
+        user.username || username,
+        user.title || user.displayName || '',
         stats.subscriberCount || stats.followerCount || 0,
         user.bio || user.profileDescription || ''
       );
@@ -243,9 +260,9 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
 
       res.setHeader('X-Powered-By', 'SocialAgeChecker');
       res.json({
-        username: user.username || user.uniqueId || username,
-        nickname: user.displayName || '',
-        avatar: user.snapcode || user.profileImageUrl || '',
+        username: user.username || username,
+        nickname: user.title || user.displayName || '',
+        avatar: user.snapcodeImageUrl || user.snapcode || '',
         followers: stats.subscriberCount || stats.followerCount || 0,
         description: user.bio || user.profileDescription || 'No bio',
         estimated_creation_date: formattedDate,
