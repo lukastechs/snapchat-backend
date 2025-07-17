@@ -8,9 +8,9 @@ const app = express();
 app.use(cors());
 const PORT = process.env.PORT || 8080;
 
-const SCRAPER_TECH_KEY = process.env.SCRAPER_TECH_KEY;
-if (!SCRAPER_TECH_KEY) {
-  console.error('SCRAPER_TECH_KEY is not set');
+const ENSEMBLEDATA_TOKEN = process.env.ENSEMBLEDATA_TOKEN;
+if (!ENSEMBLEDATA_TOKEN) {
+  console.error('ENSEMBLEDATA_TOKEN is not set');
   process.exit(1);
 }
 
@@ -172,42 +172,40 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
   }
 
   try {
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Avoid rate limits
-    const url = `https://snapchat3.scraper.tech/get-profile?username=${encodeURIComponent(username)}`;
+    await new Promise(resolve => setTimeout(resolve, 2000)); // Delay to avoid rate limits
+    const url = `https://ensembledata.com/apis/snapchat/user/info?name=${encodeURIComponent(username)}&token=${ENSEMBLEDATA_TOKEN}`;
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'scraper-key': SCRAPER_TECH_KEY,
         'Accept': 'application/json'
       }
     });
 
     const contentType = response.headers.get('Content-Type') || '';
-    console.log('Scraper.Tech Status:', response.status, 'Content-Type:', contentType);
+    console.log('EnsembleData Status:', response.status, 'Content-Type:', contentType);
 
     if (!contentType.includes('application/json')) {
       const text = await response.text();
-      console.log('Scraper.Tech Response (non-JSON):', text.slice(0, 200));
+      console.log('EnsembleData Response (non-JSON):', text.slice(0, 200));
       return res.status(response.status).json({
-        error: 'Invalid response from Scraper.Tech',
+        error: 'Invalid response from EnsembleData',
         details: `Expected JSON, received ${contentType}`,
         responseText: text.slice(0, 200)
       });
     }
 
     const data = await response.json();
-    console.log('Scraper.Tech Response:', JSON.stringify(data, null, 2));
+    console.log('EnsembleData Response:', JSON.stringify(data, null, 2));
 
-    if (response.ok && data && data.userInfo && data.userInfo.user) {
-      const user = data.userInfo.user;
-      const stats = data.userInfo.stats || {};
+    if (response.ok && data && data.data) {
+      const user = data.data;
       const ageEstimate = SnapchatAgeEstimator.estimateAccountAge(
-        user.username || user.uniqueId || username,
-        user.displayName || '',
-        stats.subscriberCount || stats.followerCount || 0
+        user.name || username,
+        user.display_name || '',
+        user.followers || 0
       );
 
-      if (!user.bio && !user.profileDescription) {
+      if (!user.bio) {
         console.log(`No bio found for ${username}`);
       }
 
@@ -216,11 +214,11 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
 
       res.setHeader('X-Powered-By', 'SocialAgeChecker');
       res.json({
-        username: user.username || user.uniqueId || username,
-        nickname: user.displayName || '',
-        avatar: user.snapcode || user.profileImageUrl || '',
-        followers: stats.subscriberCount || stats.followerCount || 0,
-        description: user.bio || user.profileDescription || 'No bio',
+        username: user.name || username,
+        nickname: user.display_name || '',
+        avatar: user.snapcode || '',
+        followers: user.followers || 0,
+        description: user.bio || 'No bio',
         estimated_creation_date: formattedDate,
         estimated_creation_date_range: ageEstimate.dateRange,
         account_age: accountAge,
@@ -235,22 +233,30 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
     } else {
       res.status(404).json({
         error: data?.error || 'User not found or profile is private',
-        scraper_tech_response: data
+        ensembledata_response: data
       });
     }
   } catch (error) {
-    console.error('Scraper.Tech Error:', error.message, error.stack);
-    if (error.message.includes('Unexpected token')) {
+    console.error('EnsembleData Error:', error.message, error.stack);
+    if (error.message.includes('certificate has expired')) {
+      res.status(503).json({
+        error: 'EnsembleData API unavailable due to expired SSL certificate',
+        details: 'Please try again later or contact support.',
+        errorMessage: error.message
+      });
+    } else if (error.message.includes('Unexpected token')) {
       res.status(500).json({
-        error: 'Failed to parse Scraper.Tech response',
+        error: 'Failed to parse EnsembleData response',
         details: 'Received invalid JSON, likely an HTML error page',
         errorMessage: error.message
       });
     } else if (error.response?.status === 429) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+    } else if (error.response?.status === 493) {
+      res.status(403).json({ error: 'EnsembleData subscription expired.', details: 'Please renew your subscription.' });
     } else {
       res.status(500).json({
-        error: 'Failed to fetch user info from Scraper.Tech',
+        error: 'Failed to fetch user info from EnsembleData',
         details: error.message
       });
     }
