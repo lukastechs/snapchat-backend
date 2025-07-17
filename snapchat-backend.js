@@ -174,6 +174,7 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
   try {
     await new Promise(resolve => setTimeout(resolve, 1000)); // Avoid rate limits
     const url = `https://snapchat3.scraper.tech/get-profile?username=${encodeURIComponent(username)}`;
+    import https from 'https';
     const response = await fetch(url, {
       method: 'GET',
       headers: {
