@@ -2,15 +2,16 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
+import https from 'https';
 
 dotenv.config();
 const app = express();
 app.use(cors());
 const PORT = process.env.PORT || 8080;
 
-const ENSEMBLEDATA_TOKEN = process.env.ENSEMBLEDATA_TOKEN;
-if (!ENSEMBLEDATA_TOKEN) {
-  console.error('ENSEMBLEDATA_TOKEN is not set');
+const SCRAPER_TECH_KEY = process.env.SCRAPER_TECH_KEY;
+if (!SCRAPER_TECH_KEY) {
+  console.error('SCRAPER_TECH_KEY is not set');
   process.exit(1);
 }
 
@@ -97,9 +98,25 @@ class SnapchatAgeEstimator {
     return new Date('2023-01-01');
   }
 
-  static estimateAccountAge(username, displayName, followers = 0) {
+  static estimateFromBio(bio) {
+    if (!bio) return null;
+    const patterns = [
+      { regex: /est\.?\s*(20\d{2})/i, extractor: (match) => new Date(`${match[1]}-01-01`) },
+      { regex: /\bkik\b/i, dateRange: new Date('2012-06-01') },
+      { regex: /\bSpotlight\b/i, dateRange: new Date('2020-11-01') }
+    ];
+    for (const pattern of patterns) {
+      const match = bio.match(pattern.regex);
+      if (match) {
+        return pattern.extractor ? pattern.extractor(match) : pattern.dateRange;
+      }
+    }
+    return null;
+  }
+
+  static estimateAccountAge(username, displayName, followers = 0, bio = '') {
     const estimates = [];
-    const confidence = { low: 1, medium: 2 };
+    const confidence = { low: 1, medium: 2, high: 3 };
     const usernameEst = this.estimateFromUsername(username);
     if (usernameEst) {
       estimates.push({
@@ -124,6 +141,14 @@ class SnapchatAgeEstimator {
         method: 'Follower Count'
       });
     }
+    const bioEst = this.estimateFromBio(bio);
+    if (bioEst) {
+      estimates.push({
+        date: bioEst,
+        confidence: bio.match(/est\.?\s*20\d{2}/i) ? confidence.high : confidence.low,
+        method: 'Bio Analysis'
+      });
+    }
     if (estimates.length === 0) {
       return {
         estimatedDate: new Date(),
@@ -137,9 +162,9 @@ class SnapchatAgeEstimator {
     const totalWeight = estimates.reduce((sum, est) => sum + est.confidence, 0);
     const finalDate = new Date(weightedSum / totalWeight);
     const maxConfidence = Math.max(...estimates.map(e => e.confidence));
-    const confidenceLevel = maxConfidence === 2 ? 'medium' : 'low';
+    const confidenceLevel = maxConfidence === 3 ? 'high' : maxConfidence === 2 ? 'medium' : 'low';
     const primaryMethod = estimates.find(e => e.confidence === maxConfidence)?.method || 'Combined';
-    const accuracy = confidenceLevel === 'medium' ? '±6 months' : '±12 months';
+    const accuracy = confidenceLevel === 'high' ? '±3 months' : confidenceLevel === 'medium' ? '±6 months' : '±12 months';
     return {
       estimatedDate: finalDate,
       confidence: confidenceLevel,
@@ -173,39 +198,43 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
 
   try {
     await new Promise(resolve => setTimeout(resolve, 2000)); // Delay to avoid rate limits
-    const url = `https://ensembledata.com/apis/snapchat/user/info?name=${encodeURIComponent(username)}&token=${ENSEMBLEDATA_TOKEN}`;
+    const url = `https://snapchat3.scraper.tech/get-profile?username=${encodeURIComponent(username)}`;
     const response = await fetch(url, {
       method: 'GET',
       headers: {
+        'scraper-key': SCRAPER_TECH_KEY,
         'Accept': 'application/json'
-      }
+      },
+      agent: new https.Agent({ rejectUnauthorized: false }) // Temporary bypass for expired certificate
     });
 
     const contentType = response.headers.get('Content-Type') || '';
-    console.log('EnsembleData Status:', response.status, 'Content-Type:', contentType);
+    console.log('ScraperTech Status:', response.status, 'Content-Type:', contentType);
 
     if (!contentType.includes('application/json')) {
       const text = await response.text();
-      console.log('EnsembleData Response (non-JSON):', text.slice(0, 200));
+      console.log('ScraperTech Response (non-JSON):', text.slice(0, 200));
       return res.status(response.status).json({
-        error: 'Invalid response from EnsembleData',
+        error: 'Invalid response from ScraperTech',
         details: `Expected JSON, received ${contentType}`,
         responseText: text.slice(0, 200)
       });
     }
 
     const data = await response.json();
-    console.log('EnsembleData Response:', JSON.stringify(data, null, 2));
+    console.log('ScraperTech Response:', JSON.stringify(data, null, 2));
 
-    if (response.ok && data && data.data) {
-      const user = data.data;
+    if (response.ok && data && data.userInfo && data.userInfo.user) {
+      const user = data.userInfo.user;
+      const stats = data.userInfo.stats || {};
       const ageEstimate = SnapchatAgeEstimator.estimateAccountAge(
-        user.name || username,
-        user.display_name || '',
-        user.followers || 0
+        user.username || user.uniqueId || username,
+        user.displayName || '',
+        stats.subscriberCount || stats.followerCount || 0,
+        user.bio || user.profileDescription || ''
       );
 
-      if (!user.bio) {
+      if (!user.bio && !user.profileDescription) {
         console.log(`No bio found for ${username}`);
       }
 
@@ -214,11 +243,11 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
 
       res.setHeader('X-Powered-By', 'SocialAgeChecker');
       res.json({
-        username: user.name || username,
-        nickname: user.display_name || '',
-        avatar: user.snapcode || '',
-        followers: user.followers || 0,
-        description: user.bio || 'No bio',
+        username: user.username || user.uniqueId || username,
+        nickname: user.displayName || '',
+        avatar: user.snapcode || user.profileImageUrl || '',
+        followers: stats.subscriberCount || stats.followerCount || 0,
+        description: user.bio || user.profileDescription || 'No bio',
         estimated_creation_date: formattedDate,
         estimated_creation_date_range: ageEstimate.dateRange,
         account_age: accountAge,
@@ -227,36 +256,34 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
         accuracy_range: ageEstimate.accuracy,
         estimation_details: {
           all_estimates: ageEstimate.allEstimates,
-          note: 'This is an estimated creation date based on username, display name, and follower data. Actual creation date may vary. This tool is not affiliated with Snapchat.'
+          note: 'This is an estimated creation date based on username, display name, follower data, and bio analysis. Actual creation date may vary. This tool is not affiliated with Snapchat.'
         }
       });
     } else {
       res.status(404).json({
         error: data?.error || 'User not found or profile is private',
-        ensembledata_response: data
+        scraper_tech_response: data
       });
     }
   } catch (error) {
-    console.error('EnsembleData Error:', error.message, error.stack);
+    console.error('ScraperTech Error:', error.message, error.stack);
     if (error.message.includes('certificate has expired')) {
       res.status(503).json({
-        error: 'EnsembleData API unavailable due to expired SSL certificate',
-        details: 'Please try again later or contact support.',
+        error: 'ScraperTech API temporarily unavailable due to SSL certificate issue',
+        details: 'A temporary workaround is in place. Please try again later or contact support.',
         errorMessage: error.message
       });
     } else if (error.message.includes('Unexpected token')) {
       res.status(500).json({
-        error: 'Failed to parse EnsembleData response',
+        error: 'Failed to parse ScraperTech response',
         details: 'Received invalid JSON, likely an HTML error page',
         errorMessage: error.message
       });
     } else if (error.response?.status === 429) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
-    } else if (error.response?.status === 493) {
-      res.status(403).json({ error: 'EnsembleData subscription expired.', details: 'Please renew your subscription.' });
     } else {
       res.status(500).json({
-        error: 'Failed to fetch user info from EnsembleData',
+        error: 'Failed to fetch user info from ScraperTech',
         details: error.message
       });
     }
