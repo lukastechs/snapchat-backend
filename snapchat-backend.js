@@ -75,6 +75,21 @@ class SnapchatAgeEstimator {
     return null;
   }
 
+  static estimateFromDisplayName(displayName) {
+    if (!displayName) return null;
+    const patterns = [
+      { regex: /^[A-Z][a-z]+\s[A-Z][a-z]+$/, dateRange: new Date('2012-06-01') }, // Real names
+      { regex: /[\uD800-\uDFFF]/, dateRange: new Date('2016-01-01') }, // Emojis
+      { regex: /\d{4}$/, dateRange: new Date('2020-01-01') } // Year suffixes
+    ];
+    for (const pattern of patterns) {
+      if (pattern.regex.test(displayName)) {
+        return pattern.dateRange;
+      }
+    }
+    return null;
+  }
+
   static estimateFromFollowers(followers) {
     if (followers > 1000000) return new Date('2018-01-01');
     else if (followers > 100000) return new Date('2019-06-01');
@@ -82,7 +97,7 @@ class SnapchatAgeEstimator {
     return new Date('2023-01-01');
   }
 
-  static estimateAccountAge(username, followers = 0) {
+  static estimateAccountAge(username, displayName, followers = 0) {
     const estimates = [];
     const confidence = { low: 1, medium: 2 };
     const usernameEst = this.estimateFromUsername(username);
@@ -91,6 +106,14 @@ class SnapchatAgeEstimator {
         date: usernameEst,
         confidence: confidence.medium,
         method: 'Username Pattern'
+      });
+    }
+    const displayNameEst = this.estimateFromDisplayName(displayName);
+    if (displayNameEst) {
+      estimates.push({
+        date: displayNameEst,
+        confidence: confidence.medium,
+        method: 'Display Name Pattern'
       });
     }
     const followersEst = this.estimateFromFollowers(followers);
@@ -150,7 +173,7 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
 
   try {
     await new Promise(resolve => setTimeout(resolve, 1000)); // Avoid rate limits
-    const url = `https://api.scraper.tech/snapchat_user.php?username=${encodeURIComponent(username)}`;
+    const url = `https://snapchat3.scraper.tech/get-profile?username=${encodeURIComponent(username)}`;
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -158,19 +181,33 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
         'Accept': 'application/json'
       }
     });
-    const data = await response.json();
 
+    const contentType = response.headers.get('Content-Type') || '';
+    console.log('Scraper.Tech Status:', response.status, 'Content-Type:', contentType);
+
+    if (!contentType.includes('application/json')) {
+      const text = await response.text();
+      console.log('Scraper.Tech Response (non-JSON):', text.slice(0, 200));
+      return res.status(response.status).json({
+        error: 'Invalid response from Scraper.Tech',
+        details: `Expected JSON, received ${contentType}`,
+        responseText: text.slice(0, 200)
+      });
+    }
+
+    const data = await response.json();
     console.log('Scraper.Tech Response:', JSON.stringify(data, null, 2));
 
     if (response.ok && data && data.userInfo && data.userInfo.user) {
       const user = data.userInfo.user;
-      const stats = data.userInfo.stats;
+      const stats = data.userInfo.stats || {};
       const ageEstimate = SnapchatAgeEstimator.estimateAccountAge(
-        user.uniqueId || username,
-        stats?.followerCount || 0
+        user.username || user.uniqueId || username,
+        user.displayName || '',
+        stats.subscriberCount || stats.followerCount || 0
       );
 
-      if (!user.bio) {
+      if (!user.bio && !user.profileDescription) {
         console.log(`No bio found for ${username}`);
       }
 
@@ -179,11 +216,11 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
 
       res.setHeader('X-Powered-By', 'SocialAgeChecker');
       res.json({
-        username: user.uniqueId || username,
+        username: user.username || user.uniqueId || username,
         nickname: user.displayName || '',
-        avatar: user.snapcode || '',
-        followers: stats?.followerCount || 0,
-        description: user.bio || 'No bio',
+        avatar: user.snapcode || user.profileImageUrl || '',
+        followers: stats.subscriberCount || stats.followerCount || 0,
+        description: user.bio || user.profileDescription || 'No bio',
         estimated_creation_date: formattedDate,
         estimated_creation_date_range: ageEstimate.dateRange,
         account_age: accountAge,
@@ -192,7 +229,7 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
         accuracy_range: ageEstimate.accuracy,
         estimation_details: {
           all_estimates: ageEstimate.allEstimates,
-          note: 'This is an estimated creation date based on username and follower data. Actual creation date may vary. This tool is not affiliated with Snapchat.'
+          note: 'This is an estimated creation date based on username, display name, and follower data. Actual creation date may vary. This tool is not affiliated with Snapchat.'
         }
       });
     } else {
@@ -203,7 +240,13 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
     }
   } catch (error) {
     console.error('Scraper.Tech Error:', error.message, error.stack);
-    if (error.response?.status === 429) {
+    if (error.message.includes('Unexpected token')) {
+      res.status(500).json({
+        error: 'Failed to parse Scraper.Tech response',
+        details: 'Received invalid JSON, likely an HTML error page',
+        errorMessage: error.message
+      });
+    } else if (error.response?.status === 429) {
       res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
     } else {
       res.status(500).json({
