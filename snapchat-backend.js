@@ -6,7 +6,7 @@ import fetch from 'node-fetch';
 dotenv.config();
 const app = express();
 app.use(cors());
-app.use(express.json()); // Added for POST endpoint
+app.use(express.json());
 const PORT = process.env.PORT || 8080;
 
 const SCRAPERTECH_KEY = process.env.SCRAPERTECH_KEY;
@@ -107,7 +107,7 @@ app.post('/api/snapchat-age/:username', async (req, res) => {
       return res.status(400).json({ error: 'reCAPTCHA verification failed' });
     }
 
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Delay to avoid rate limits
+    await new Promise(resolve => setTimeout(resolve, 2000));
     const url = `https://snapchat3.scraper.tech/get-profile?username=${encodeURIComponent(username)}`;
     const response = await fetch(url, {
       method: 'GET',
@@ -120,18 +120,18 @@ app.post('/api/snapchat-age/:username', async (req, res) => {
     const contentType = response.headers.get('Content-Type') || '';
     console.log('ScraperTech Status:', response.status, 'Content-Type:', contentType);
 
-    if (!contentType.includes('application/json')) {
+    let data;
+    try {
       const text = await response.text();
-      console.log('ScraperTech Response (non-JSON):', text.slice(0, 200));
-      return res.status(response.status).json({
-        error: 'Invalid response from ScraperTech',
-        details: `Expected JSON, received ${contentType}`,
+      data = JSON.parse(text); // Attempt to parse as JSON regardless of Content-Type
+    } catch (parseError) {
+      console.log('ScraperTech Response (failed to parse):', text.slice(0, 200));
+      return res.status(500).json({
+        error: 'Failed to parse ScraperTech response',
+        details: parseError.message,
         responseText: text.slice(0, 200)
       });
     }
-
-    const data = await response.json();
-    console.log('ScraperTech Response:', JSON.stringify(data, null, 2));
 
     if (response.ok && data.success && data.data?.info) {
       const user = data.data.info;
@@ -215,7 +215,7 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
   }
 
   try {
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Delay to avoid rate limits
+    await new Promise(resolve => setTimeout(resolve, 2000));
     const url = `https://snapchat3.scraper.tech/get-profile?username=${encodeURIComponent(username)}`;
     const response = await fetch(url, {
       method: 'GET',
@@ -228,18 +228,18 @@ app.get('/api/snapchat-age/:username', async (req, res) => {
     const contentType = response.headers.get('Content-Type') || '';
     console.log('ScraperTech Status:', response.status, 'Content-Type:', contentType);
 
-    if (!contentType.includes('application/json')) {
+    let data;
+    try {
       const text = await response.text();
-      console.log('ScraperTech Response (non-JSON):', text.slice(0, 200));
-      return res.status(response.status).json({
-        error: 'Invalid response from ScraperTech',
-        details: `Expected JSON, received ${contentType}`,
+      data = JSON.parse(text); // Attempt to parse as JSON regardless of Content-Type
+    } catch (parseError) {
+      console.log('ScraperTech Response (failed to parse):', text.slice(0, 200));
+      return res.status(500).json({
+        error: 'Failed to parse ScraperTech response',
+        details: parseError.message,
         responseText: text.slice(0, 200)
       });
     }
-
-    const data = await response.json();
-    console.log('ScraperTech Response:', JSON.stringify(data, null, 2));
 
     if (response.ok && data.success && data.data?.info) {
       const user = data.data.info;
