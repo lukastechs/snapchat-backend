@@ -1,7 +1,7 @@
 {
   "name": "snapchat-age-checker-backend",
   "version": "1.0.0",
-  "description": "Backend for Snapchat Age Checker",
+  "description": "Backend for Snapchat Age Checker using ScraperTech API",
   "main": "snapchat-backend.js",
   "type": "module",
   "scripts": {
@@ -17,6 +17,19 @@
   "devDependencies": {
     "nodemon": "^3.1.4"
   },
-  "author": "Your Name",
-  "license": "ISC"
+  "author": "Your Name <your.email@example.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "snapchat",
+    "age-checker",
+    "api",
+    "scrapertech"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/snapchat-age-checker-backend.git"
+  }
 }
